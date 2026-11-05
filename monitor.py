@@ -3,12 +3,17 @@ import os
 import smtplib
 import ssl
 import sys
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-COLLECTION = "https://www.pokemonsouthafrica.store/collections/pokemon-tcg-products-english"
+SOURCES = {
+    "Pokémon South Africa": ("shopify", "https://www.pokemonsouthafrica.store/collections/pokemon-tcg-products-english"),
+    "Weebforce": ("shopify", "https://www.weebforce.co.za/collections/pokemon"),
+    "Rocket Grunt TCG": ("woocommerce", "https://rocketgrunttcg.co.za"),
+    "Viridian Archives": ("woocommerce", "https://viridianarchives.co.za"),
+}
 STATE = Path("stock-state.json")
 
 
@@ -23,11 +28,11 @@ def send(subject, body):
         smtp.send_message(message)
 
 
-def scan():
+def scan_shopify(collection):
     variants = {}
     for page in range(1, 51):
-        request = Request(f"{COLLECTION}/products.json?limit=250&page={page}", headers={"Accept": "application/json"})
-        with urlopen(request, timeout=25) as response:
+        request = Request(f"{collection}/products.json?limit=250&page={page}", headers={"Accept": "application/json"})
+        with urlopen(request, timeout=12) as response:
             products = json.load(response)["products"]
         for product in products:
             for variant in product["variants"]:
@@ -35,7 +40,7 @@ def scan():
                     "title": product["title"] + " / " + variant["title"],
                     "price": str(Decimal(variant["price"])),
                     "available": variant["available"],
-                    "url": f"{COLLECTION.split('/collections/')[0]}/products/{product['handle']}?variant={variant['id']}",
+                    "url": f"{collection.split('/collections/')[0]}/products/{product['handle']}?variant={variant['id']}",
                 }
         if len(products) < 250:
             break
@@ -44,6 +49,34 @@ def scan():
     if not variants:
         raise RuntimeError("Retailer returned an empty catalogue")
     return variants
+
+
+def scan_woocommerce(store):
+    items = {}
+    for page in range(1, 101):
+        url = f"{store}/wp-json/wc/store/v1/products?per_page=100&page={page}"
+        request = Request(url, headers={"Accept": "application/json"})
+        with urlopen(request, timeout=12) as response:
+            products = json.load(response)
+            last_page = int(response.headers.get("X-WP-TotalPages", page + 1))
+        for product in products:
+            prices = product["prices"]
+            if prices["currency_code"] != "ZAR" or not prices["price"]:
+                continue
+            price = Decimal(prices["price"]).scaleb(-int(prices["currency_minor_unit"]))
+            items[str(product["id"])] = {
+                "title": product["name"],
+                "price": str(price),
+                "available": product["is_in_stock"],
+                "url": product["permalink"],
+            }
+        if page >= last_page or len(products) < 100:
+            break
+    else:
+        raise RuntimeError("Catalogue exceeded the pagination limit")
+    if not items:
+        raise RuntimeError("Retailer returned no priced products")
+    return items
 
 
 def changes(previous, current):
@@ -65,15 +98,28 @@ def main():
     if "--test-email" in sys.argv:
         send("Poke-IT SA stock alerts test", "Your private stock alert email is connected.")
         return
-    current = scan()
-    previous = json.loads(STATE.read_text()) if STATE.exists() else None
-    alerts = list(changes(previous, current)) if previous is not None else []
+    state = json.loads(STATE.read_text()) if STATE.exists() else {}
+    if state and "stores" not in state:
+        state = {"stores": {"Pokémon South Africa": state}}
+    stores = state.setdefault("stores", {})
+    alerts = []
+    successful = 0
+    for name, (platform, url) in SOURCES.items():
+        try:
+            current = scan_shopify(url) if platform == "shopify" else scan_woocommerce(url)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError, DecimalException) as error:
+            print(f"::warning::{name}: {error}")
+            continue
+        successful += 1
+        if name in stores:
+            alerts.extend(f"{name} — {entry}" for entry in changes(stores[name], current))
+        stores.setdefault(name, {}).update(current)
+        print(f"{name}: checked {len(current)} items")
+    if not successful:
+        raise RuntimeError("No retailer scans succeeded")
     if alerts:
         send(f"Poke-IT SA stock alerts ({len(alerts)})", "\n\n".join(alerts))
-    state = previous or {}
-    state.update(current)
     STATE.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
-    print(f"Checked {len(current)} variants. {len(alerts)} changes.")
 
 
 if __name__ == "__main__":
