@@ -12,6 +12,12 @@ SOURCES = {
     "Pokémon South Africa": ("shopify", "https://www.pokemonsouthafrica.store/collections/pokemon-tcg-products-english"),
     "Level Up Store": ("shopify_collections", "https://levelupstore.co.za"),
     "The Geek Home": ("woocommerce_category", "https://www.geekhome.co.za"),
+    "Knightly Gaming (sealed)": ("shopify", "https://www.knightlygaming.co.za/collections/pokemon-sealed"),
+    "Knightly Gaming (singles)": ("shopify", "https://www.knightlygaming.co.za/collections/pokemon-singles"),
+    "Geek Zone": ("woocommerce_category", "https://www.geek-zone.co.za"),
+    "The Big Bang Shop": ("shopify", "https://bigbangshop.co.za/collections/pokemon-trading-card-game"),
+    "Aniware": ("shopify", "https://sealed.aniware.co.za/collections/pokemon"),
+    "Geekstop": ("shopify", "https://www.gstopza.co.za/collections/all-pokemon-cards"),
     "Weebforce": ("shopify", "https://www.weebforce.co.za/collections/pokemon"),
     "Rocket Grunt TCG": ("woocommerce", "https://rocketgrunttcg.co.za"),
     "Viridian Archives": ("woocommerce", "https://viridianarchives.co.za"),
@@ -75,7 +81,7 @@ def scan_level_up(store):
     return items
 
 
-def scan_geek_home(store):
+def scan_pokemon_category(store):
     url = f"{store}/wp-json/wc/store/v1/products/categories?slug=pokemon"
     with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=12) as response:
         categories = json.load(response)
@@ -144,7 +150,7 @@ def main():
         "shopify": scan_shopify,
         "woocommerce": scan_woocommerce,
         "shopify_collections": scan_level_up,
-        "woocommerce_category": scan_geek_home,
+        "woocommerce_category": scan_pokemon_category,
     }
     for name, (platform, url) in SOURCES.items():
         try:
