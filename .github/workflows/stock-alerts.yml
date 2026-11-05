@@ -1,0 +1,48 @@
+name: Pokémon stock alerts
+on:
+  workflow_dispatch:
+    inputs:
+      test_email:
+        description: Send a test email instead of scanning
+        type: boolean
+        default: true
+  schedule:
+    - cron: '3-58/5 * * * *'
+permissions:
+  contents: write
+concurrency:
+  group: stock-monitor
+  cancel-in-progress: false
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      ALERT_SENDER: ${{ secrets.ALERT_SENDER }}
+      ALERT_RECIPIENT: ${{ secrets.ALERT_RECIPIENT }}
+      ALERT_APP_PASSWORD: ${{ secrets.ALERT_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check products or test email
+        env:
+          TEST_EMAIL: ${{ inputs.test_email }}
+        run: |
+          if [ -z "$ALERT_SENDER" ] || [ -z "$ALERT_RECIPIENT" ] || [ -z "$ALERT_APP_PASSWORD" ]; then
+            echo "::error::Configure the three ALERT repository secrets before running."
+            exit 1
+          fi
+          if [ "$TEST_EMAIL" = true ]; then
+            python3 monitor.py --test-email
+          else
+            python3 monitor.py
+          fi
+      - name: Save public catalogue snapshot
+        if: ${{ inputs.test_email != true }}
+        run: |
+          git add -- stock-state.json
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m "Update catalogue snapshot"
+            git push origin HEAD
+          fi
