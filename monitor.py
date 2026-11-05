@@ -18,6 +18,7 @@ SOURCES = {
     "The Big Bang Shop": ("shopify", "https://bigbangshop.co.za/collections/pokemon-trading-card-game"),
     "Aniware": ("shopify", "https://sealed.aniware.co.za/collections/pokemon"),
     "Geekstop": ("shopify", "https://www.gstopza.co.za/collections/all-pokemon-cards"),
+    "Toy Kingdom": ("shopify_tcg", "https://www.toykingdom.co.za/collections/pokemon"),
     "Weebforce": ("shopify", "https://www.weebforce.co.za/collections/pokemon"),
     "Rocket Grunt TCG": ("woocommerce", "https://rocketgrunttcg.co.za"),
     "Viridian Archives": ("woocommerce", "https://viridianarchives.co.za"),
@@ -57,6 +58,18 @@ def scan_shopify(collection, allow_empty=False):
     if not variants and not allow_empty:
         raise RuntimeError("Retailer returned an empty catalogue")
     return variants
+
+
+def scan_toy_kingdom(collection):
+    terms = ("tcg", "booster", "blister", "elite trainer", "battle deck", "premium collection",
+             "trainer toolkit", "collection box", "mini tin", "pokémon tin", "pokemon tin")
+    items = {
+        key: item for key, item in scan_shopify(collection).items()
+        if any(term in item["title"].casefold() for term in terms)
+    }
+    if not items:
+        raise RuntimeError("Toy Kingdom returned no matching Pokémon TCG products")
+    return items
 
 
 def scan_level_up(store):
@@ -148,6 +161,7 @@ def main():
     successful = 0
     readers = {
         "shopify": scan_shopify,
+        "shopify_tcg": scan_toy_kingdom,
         "woocommerce": scan_woocommerce,
         "shopify_collections": scan_level_up,
         "woocommerce_category": scan_pokemon_category,
