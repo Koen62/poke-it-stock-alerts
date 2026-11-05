@@ -10,6 +10,8 @@ from urllib.request import Request, urlopen
 
 SOURCES = {
     "Pokémon South Africa": ("shopify", "https://www.pokemonsouthafrica.store/collections/pokemon-tcg-products-english"),
+    "Level Up Store": ("shopify_collections", "https://levelupstore.co.za"),
+    "The Geek Home": ("woocommerce_category", "https://www.geekhome.co.za"),
     "Weebforce": ("shopify", "https://www.weebforce.co.za/collections/pokemon"),
     "Rocket Grunt TCG": ("woocommerce", "https://rocketgrunttcg.co.za"),
     "Viridian Archives": ("woocommerce", "https://viridianarchives.co.za"),
@@ -28,7 +30,7 @@ def send(subject, body):
         smtp.send_message(message)
 
 
-def scan_shopify(collection):
+def scan_shopify(collection, allow_empty=False):
     variants = {}
     for page in range(1, 51):
         request = Request(f"{collection}/products.json?limit=250&page={page}", headers={"Accept": "application/json"})
@@ -46,15 +48,49 @@ def scan_shopify(collection):
             break
     else:
         raise RuntimeError("Catalogue exceeded the pagination limit")
-    if not variants:
+    if not variants and not allow_empty:
         raise RuntimeError("Retailer returned an empty catalogue")
     return variants
 
 
-def scan_woocommerce(store):
+def scan_level_up(store):
+    collections = (
+        "pokemon-pre-orders",
+        "japanese-pokemon-tcg",
+        "pokemon-chinese",
+        "korean-pokemon",
+        "pokemon-booster-packs",
+        "pokemon-blisters",
+        "pokemon-booster-boxes",
+        "pokemon-elite-trainer-boxes",
+        "pokemon-boxes",
+        "pokemon-tins",
+        "pokemon-decks",
+    )
+    items = {}
+    for collection in collections:
+        items.update(scan_shopify(f"{store}/collections/{collection}", allow_empty=True))
+    if not items:
+        raise RuntimeError("Retailer returned an empty catalogue")
+    return items
+
+
+def scan_geek_home(store):
+    url = f"{store}/wp-json/wc/store/v1/products/categories?slug=pokemon"
+    with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=12) as response:
+        categories = json.load(response)
+    category = next((item for item in categories if item["slug"] == "pokemon"), None)
+    if category is None:
+        raise RuntimeError("Pokémon category unavailable")
+    return scan_woocommerce(store, category["id"])
+
+
+def scan_woocommerce(store, category=None):
     items = {}
     for page in range(1, 101):
         url = f"{store}/wp-json/wc/store/v1/products?per_page=100&page={page}"
+        if category is not None:
+            url += f"&category={int(category)}"
         request = Request(url, headers={"Accept": "application/json"})
         with urlopen(request, timeout=12) as response:
             products = json.load(response)
@@ -104,9 +140,15 @@ def main():
     stores = state.setdefault("stores", {})
     alerts = []
     successful = 0
+    readers = {
+        "shopify": scan_shopify,
+        "woocommerce": scan_woocommerce,
+        "shopify_collections": scan_level_up,
+        "woocommerce_category": scan_geek_home,
+    }
     for name, (platform, url) in SOURCES.items():
         try:
-            current = scan_shopify(url) if platform == "shopify" else scan_woocommerce(url)
+            current = readers[platform](url)
         except (OSError, ValueError, KeyError, TypeError, RuntimeError, DecimalException) as error:
             print(f"::warning::{name}: {error}")
             continue
